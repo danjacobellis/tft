@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tft"
+version = "0.0.4"
+description = "Time-Frequency Transformers"
+authors = [
+    {name = "Dan Jacobellis", email = "danjacobellis@utexas.edu"}
+]
+readme = "README.md"
+license = {file = "LICENSE"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent"
+]
+dependencies = [
+    "torch",
+    "einops",
+    "PyWavelets",
+    "pytorch-wavelets",
+]
+requires-python = ">=3.6"
