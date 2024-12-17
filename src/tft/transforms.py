@@ -2,7 +2,7 @@ import torch
 import einops
 from pytorch_wavelets import DWTForward, DWT1DForward, DWTInverse, DWT1DInverse
 
-class WPT2D(nn.Module):
+class WPT2D(torch.nn.Module):
     def __init__(self, wt=DWTForward(J=1, mode='periodization', wave='bior4.4'), J=4):
         super().__init__()
         self.wt  = wt
@@ -20,7 +20,7 @@ class WPT2D(nn.Module):
         return self.wavelet_analysis(x,J=self.J)
 
         
-class IWPT2D(nn.Module):
+class IWPT2D(torch.nn.Module):
     def __init__(self, iwt=DWTInverse(mode='periodization', wave='bior4.4'), J=4):
         super().__init__()
         self.iwt  = iwt
