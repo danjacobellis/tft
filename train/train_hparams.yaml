@@ -2,7 +2,7 @@ aa: rand-m7-inc1-mstd1.0-n3
 amp: true
 amp_dtype: float16
 amp_impl: native
-aug_repeats: 3.0
+aug_repeats: 0
 aug_splits: 0
 batch_size: 256
 bce_loss: false
@@ -20,9 +20,9 @@ crop_pct: 0.95
 cutmix: 1.0
 cutmix_minmax: null
 data: null
-data_dir: /
-dataset: hfids:imagenet-1k-wds
-dataset_download: false
+data_dir: null
+dataset: hfids/timm/imagenet-1k-wds
+dataset_download: true
 decay_epochs: 100
 decay_milestones:
 - 90
@@ -50,6 +50,7 @@ hflip: 0.5
 img_size: 256
 in_chans: null
 initial_checkpoint: ''
+input_key: 'jpg'
 input_size: null
 interpolation: ''
 jsd_loss: false
@@ -120,6 +121,7 @@ start_epoch: null
 std: null
 sync_bn: false
 synchronize_step: false
+target_key: 'cls'
 torchcompile: inductor
 torchscript: false
 train_interpolation: random
