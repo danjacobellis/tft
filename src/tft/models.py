@@ -1,7 +1,6 @@
 import torch
 from timm.models.maxxvit import TransformerBlock2d, MaxxVitTransformerCfg
 from timm.models._efficientnet_blocks import UniversalInvertedResidual
-from pytorch_ggd.GGD import DynamicGGD
 
 class AsCAN2D(torch.nn.Module):
     def __init__(self, input_dim, embed_dim, spatial_dim, dim_head):
