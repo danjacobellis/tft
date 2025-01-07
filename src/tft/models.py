@@ -2,9 +2,9 @@ import torch
 
 from timm.models.maxxvit import TransformerBlock2d, MaxxVitTransformerCfg, LayerScale2d
 
-class RMSNormAct2d(torch.nn.Module):
+class RMSNormAct(torch.nn.Module):
     def __init__(self, normalized_features):
-        super(RMSNormAct2d, self).__init__()
+        super(RMSNormAct, self).__init__()
         self.norm = torch.nn.RMSNorm(normalized_features)
         self.act = torch.nn.GELU()
 
@@ -19,11 +19,11 @@ class InvertedResidual2D(torch.nn.Module):
         self.exp_dim = int(in_dim * exp_ratio)
         self.pw_exp = torch.nn.Sequential(
             torch.nn.Conv2d(in_dim, self.exp_dim, kernel_size=1, stride=1, bias=False),
-            RMSNormAct2d((self.exp_dim, spatial_dim, spatial_dim))
+            RMSNormAct((self.exp_dim, spatial_dim, spatial_dim))
         )
         self.dw_mid = torch.nn.Sequential(
             torch.nn.Conv2d(self.exp_dim, self.exp_dim, kernel_size=3, stride=1, padding=1, groups=self.exp_dim, bias=False),
-            RMSNormAct2d((self.exp_dim, spatial_dim, spatial_dim))
+            RMSNormAct((self.exp_dim, spatial_dim, spatial_dim))
         )
         self.se = torch.nn.Identity()
         self.pw_proj = torch.nn.Sequential(
@@ -55,7 +55,7 @@ class AsCAN2D(torch.nn.Module):
         T=lambda:TransformerBlock2d(embed_dim,embed_dim,cfg)
         self.layers=torch.nn.Sequential(
             torch.nn.Conv2d(input_dim,embed_dim,kernel_size=1),
-            RMSNormAct2d((embed_dim, spatial_dim, spatial_dim)),
+            RMSNormAct((embed_dim, spatial_dim, spatial_dim)),
             C(),C(),C(),T(),
             C(),C(),T(),T(),
             C(),T(),T(),T()
