@@ -2,11 +2,22 @@ import torch
 from timm.models.maxxvit import TransformerBlock2d, MaxxVitTransformerCfg
 from timm.models._efficientnet_blocks import UniversalInvertedResidual
 
+class RMSNormAct2d(torch.nn.Module):
+    def __init__(self, normalized_features):
+        super(RMSNormAct2d, self).__init__()
+        self.norm = torch.nn.RMSNorm(normalized_features)
+        self.act = torch.nn.GELU()
+
+    def forward(self, x):
+        x = self.norm(x)
+        x = self.act(x)
+        return x
+
 class AsCAN2D(torch.nn.Module):
     def __init__(self, input_dim, embed_dim, spatial_dim, dim_head):
         super().__init__()
         cfg = MaxxVitTransformerCfg(dim_head=dim_head)
-        norm=lambda num_features,**kw:torch.nn.RMSNorm((num_features, spatial_dim, spatial_dim))
+        norm=lambda num_features,**kw:RMSNormAct2d((num_features, spatial_dim, spatial_dim))
         C=lambda:UniversalInvertedResidual(embed_dim,embed_dim,act_layer=torch.nn.GELU,norm_layer=norm)
         T=lambda:TransformerBlock2d(embed_dim,embed_dim,cfg)
         self.layers=torch.nn.Sequential(
@@ -39,7 +50,7 @@ class WaveletPooling2D(torch.nn.Module):
             x = self.wpt.analysis_one_level(x)
         return x
 
-class TFTClassifier(torch.nn.Module):
+class TFTClassifier2D(torch.nn.Module):
     def __init__(self, config, wpt):
         super().__init__()
         self.wpt = wpt
