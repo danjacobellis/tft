@@ -1,6 +1,6 @@
 import torch
-from timm.models.maxxvit import TransformerBlock2d, MaxxVitTransformerCfg
-from timm.models._efficientnet_blocks import UniversalInvertedResidual
+
+from timm.models.maxxvit import TransformerBlock2d, MaxxVitTransformerCfg, LayerScale2d
 
 class RMSNormAct2d(torch.nn.Module):
     def __init__(self, normalized_features):
@@ -13,22 +13,49 @@ class RMSNormAct2d(torch.nn.Module):
         x = self.act(x)
         return x
 
+class InvertedResidual2D(torch.nn.Module):
+    def __init__(self, in_dim, out_dim, spatial_dim, exp_ratio):
+        super(InvertedResidual2D, self).__init__()
+        self.exp_dim = int(in_dim * exp_ratio)
+        self.pw_exp = torch.nn.Sequential(
+            torch.nn.Conv2d(in_dim, self.exp_dim, kernel_size=1, stride=1, bias=False),
+            RMSNormAct2d((self.exp_dim, spatial_dim, spatial_dim))
+        )
+        self.dw_mid = torch.nn.Sequential(
+            torch.nn.Conv2d(self.exp_dim, self.exp_dim, kernel_size=3, stride=1, padding=1, groups=self.exp_dim, bias=False),
+            RMSNormAct2d((self.exp_dim, spatial_dim, spatial_dim))
+        )
+        self.se = torch.nn.Identity()
+        self.pw_proj = torch.nn.Sequential(
+            torch.nn.Conv2d(self.exp_dim, out_dim, kernel_size=1, stride=1, bias=False),
+            torch.nn.RMSNorm((out_dim, spatial_dim, spatial_dim)) 
+        )
+        self.dw_end = torch.nn.Identity()
+        self.layer_scale = LayerScale2d(out_dim)
+        self.drop_path = torch.nn.Identity()
+        
+    def forward(self, x):
+        shortcut = x if x.shape[1] == self.pw_proj[0].out_channels else None
+        x = self.pw_exp(x)
+        x = self.dw_mid(x)
+        x = self.se(x)
+        x = self.pw_proj(x)
+        x = self.dw_end(x)
+        x = self.layer_scale(x)
+        x = self.drop_path(x)
+        if shortcut is not None:
+            x += shortcut
+        return x
+
 class AsCAN2D(torch.nn.Module):
-    def __init__(self, input_dim, embed_dim, spatial_dim, dim_head):
+    def __init__(self, input_dim, embed_dim, spatial_dim, dim_head, exp_ratio):
         super().__init__()
         cfg = MaxxVitTransformerCfg(dim_head=dim_head)
-        norm=lambda num_features,**kw:RMSNormAct2d((num_features, spatial_dim, spatial_dim))
-        C=lambda:UniversalInvertedResidual(
-            embed_dim,embed_dim,
-            act_layer=torch.nn.GELU,
-            norm_layer=norm,
-            exp_ratio=4.0
-        )
+        C=lambda:InvertedResidual2D(embed_dim, embed_dim, spatial_dim, exp_ratio)
         T=lambda:TransformerBlock2d(embed_dim,embed_dim,cfg)
         self.layers=torch.nn.Sequential(
             torch.nn.Conv2d(input_dim,embed_dim,kernel_size=1),
-            norm(embed_dim),
-            torch.nn.GELU(),
+            RMSNormAct2d((embed_dim, spatial_dim, spatial_dim)),
             C(),C(),C(),T(),
             C(),C(),T(),T(),
             C(),T(),T(),T()
@@ -63,7 +90,8 @@ class TFTClassifier2D(torch.nn.Module):
             input_dim=config.channels*(4**config.J),
             embed_dim=config.embed_dim,
             spatial_dim=config.crop_size//(2**config.J),
-            dim_head=config.dim_head
+            dim_head=config.dim_head,
+            exp_ratio=config.exp_ratio
         )
         self.pool = WaveletPooling2D(
             embed_dim=config.embed_dim,
