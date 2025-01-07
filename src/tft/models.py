@@ -18,7 +18,12 @@ class AsCAN2D(torch.nn.Module):
         super().__init__()
         cfg = MaxxVitTransformerCfg(dim_head=dim_head)
         norm=lambda num_features,**kw:RMSNormAct2d((num_features, spatial_dim, spatial_dim))
-        C=lambda:UniversalInvertedResidual(embed_dim,embed_dim,act_layer=torch.nn.GELU,norm_layer=norm)
+        C=lambda:UniversalInvertedResidual(
+            embed_dim,embed_dim,
+            act_layer=torch.nn.GELU,
+            norm_layer=norm,
+            exp_ratio=4.0
+        )
         T=lambda:TransformerBlock2d(embed_dim,embed_dim,cfg)
         self.layers=torch.nn.Sequential(
             torch.nn.Conv2d(input_dim,embed_dim,kernel_size=1),
