@@ -81,6 +81,23 @@ class InvertedResidual2D(torch.nn.Module):
             x += shortcut
         return x
 
+class TransformerBlock1D(torch.nn.Module):
+    def __init__(self, embed_dim, dim_feedforward, nhead):
+        super().__init__()
+        self.layer = torch.nn.TransformerEncoderLayer(
+            d_model=embed_dim,
+            nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            dropout=0.0,
+            activation='gelu',
+            batch_first=True
+        )
+    def forward(self, x):
+        x = einops.rearrange(x, 'b c s -> b s c')
+        x = self.layer(x)
+        x = einops.rearrange(x, 'b s c -> b c s')
+        return x
+
 class AsCAN1D(torch.nn.Module):
     def __init__(self, input_dim, embed_dim, sequence_dim, dim_head, exp_ratio):
         super().__init__()
