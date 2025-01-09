@@ -1,5 +1,6 @@
 import torch
 import einops
+import numpy as np
 from timm.models.maxxvit import TransformerBlock2d, MaxxVitTransformerCfg, LayerScale, LayerScale2d
 
 class RMSNormAct(torch.nn.Module):
