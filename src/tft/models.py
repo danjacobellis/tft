@@ -1,7 +1,7 @@
 import torch
 import einops
 import numpy as np
-from timm.models.maxxvit import TransformerBlock2d, MaxxVitTransformerCfg, LayerScale, LayerScale2d
+from timm.models.maxxvit import TransformerBlock2d, MaxxVitTransformerCfg, LayerScale2d
 
 class RMSNormAct(torch.nn.Module):
     def __init__(self, normalized_features):
@@ -13,6 +13,15 @@ class RMSNormAct(torch.nn.Module):
         x = self.norm(x)
         x = self.act(x)
         return x
+
+class LayerScale1D(torch.nn.Module):
+    def __init__(self, dim, init_values=1e-5, inplace=False):
+        super().__init__()
+        self.inplace = inplace
+        self.gamma = torch.nn.Parameter(init_values * torch.ones(dim))
+    def forward(self, x):
+        gamma = self.gamma.view(1, -1, 1)
+        return x.mul_(gamma) if self.inplace else x * gamma
 
 class InvertedResidual1D(torch.nn.Module):
     def __init__(self, in_dim, out_dim, sequence_dim, exp_ratio):
@@ -32,7 +41,7 @@ class InvertedResidual1D(torch.nn.Module):
             torch.nn.RMSNorm((out_dim, sequence_dim)) 
         )
         self.dw_end = torch.nn.Identity()
-        self.layer_scale = LayerScale(out_dim)
+        self.layer_scale = LayerScale1D(out_dim)
         self.drop_path = torch.nn.Identity()
         
     def forward(self, x):
