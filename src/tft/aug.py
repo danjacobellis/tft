@@ -1,0 +1,119 @@
+import torch
+from torchvision.transforms.v2 import RandomCrop
+
+def shrink_1d(x, batch=False):
+    if not batch:
+        x = x.unsqueeze(0)
+    ℓ = x.shape[2]
+    s = 0.2*torch.rand(1).item()
+    x = torch.nn.ReflectionPad1d(padding=int(ℓ*s))(x)
+    x = torch.nn.functional.interpolate(x,ℓ,mode='linear')
+    if not batch:
+        x = x[0]
+    return x
+
+def shrink_2d(x, batch=False):
+    if not batch:
+        x = x.unsqueeze(0)
+    h = x.shape[2]; w = x.shape[3]
+    sh = 0.5*torch.rand(1).item(); T = int(h*sh)//2; B = int(h*sh) - T
+    sw = 0.5*torch.rand(1).item(); L = int(w*sw)//2; R = int(w*sw) - L
+    x = torch.nn.ReflectionPad2d(padding=(L,R,T,B))(x)
+    x = torch.nn.functional.interpolate(x,(h,w),mode='bilinear')
+    if not batch:
+        x = x[0]
+    return x
+
+def expand_1d(x, batch=False):
+    if not batch:
+        x = x.unsqueeze(0)
+    ℓ = x.shape[2]
+    s = 0.2*torch.rand(1).item()
+    x = torch.nn.functional.interpolate(x,int(ℓ*(1+s)),mode='linear')
+    x = RandomCrop((1,ℓ))(x.unsqueeze(1))[:,0]
+    if not batch:
+        x = x[0]
+    return x
+
+def expand_2d(x, batch=False):
+    if not batch:
+        x = x.unsqueeze(0)
+    h = x.shape[2]; w = x.shape[3]
+    sh = 0.5*torch.rand(1).item(); H = int(h*(1+sh))
+    sw = 0.5*torch.rand(1).item(); W = int(w*(1+sw))
+    x = torch.nn.functional.interpolate(x,(H,W),mode='bilinear')
+    x = RandomCrop((h,w))(x)
+    if not batch:
+        x = x[0]
+    return x
+
+def filter_1d(x, batch=False):
+    if not batch:
+        x = x.unsqueeze(0)
+    g = 2*torch.rand(5)-1
+    g = torch.cat([g,torch.zeros(1),-g])
+    g = g.view(1, 1, -1)
+    B, C, L = x.shape
+    x = torch.nn.functional.conv1d(
+        x,
+        weight=g.repeat(C, 1, 1),
+        bias=None,
+        stride=1,
+        padding='same',
+        groups=C
+    )
+    if not batch:
+        x = x[0]
+    return x
+
+
+def filter_2d(x, batch=False):
+    if not batch:
+        x = x.unsqueeze(0)
+    horizontal_filter = 0.2 + torch.rand(5)-0.5
+    horizontal_filter = horizontal_filter.view(1, 1, 1, -1)
+    vertical_filter = 0.2 + torch.rand(5)-0.5
+    vertical_filter = vertical_filter.view(1, 1, -1, 1)
+    B, C, H, W = x.shape
+    x = torch.nn.functional.conv2d(
+        x,
+        weight=horizontal_filter.repeat(C, 1, 1, 1),
+        bias=None,
+        stride=1,
+        padding='same',
+        groups=C
+    )
+    x = torch.nn.functional.conv2d(
+        x,
+        weight=vertical_filter.repeat(C, 1, 1, 1),
+        bias=None,
+        stride=1,
+        padding='same',
+        groups=C
+    )
+    if not batch:
+        x = x[0]
+    return x
+
+def aug(x, batch=False):
+    if not batch:
+        x = x.unsqueeze(0)
+    if x.ndim == 3:
+        operation = torch.randint(0, 2, (1,)).item()
+        if operation == 0:
+            x = shrink_1d(x, batch=True)
+        else:
+            x = expand_1d(x, batch=True)
+        x = filter_1d(x, batch=True)
+    elif x.ndim == 4:
+        operation = torch.randint(0, 2, (1,)).item()
+        if operation == 0:
+            x = shrink_2d(x, batch=True)
+        else:
+            x = expand_2d(x, batch=True)
+        x = filter_2d(x, batch=True)
+    else:
+        raise ValueError("Input tensor must have 3 (1D) or 4 (2D) dimensions.")
+    if not batch:
+        x = x[0]
+    return x
