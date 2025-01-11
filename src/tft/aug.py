@@ -117,3 +117,48 @@ def aug(x, batch=False):
     if not batch:
         x = x[0]
     return x
+
+def crop_1d(x, ℓ, batch=False):
+    if not batch:
+        x = x.unsqueeze(0)
+    if x.shape[-1]<ℓ:
+        r = 2 + (ℓ - x.shape[-1])//x.shape[-1]
+        x = x.repeat(1, 1, r)
+        print(r)
+        print (x.shape)
+    x = RandomCrop((1,ℓ))(x.unsqueeze(1))[:,0]
+    if not batch:
+        x = x[0]
+    return x
+
+
+def reflect_pad_horizontal(x, W):
+    _, _, h, w = x.shape
+    while w < W:
+        if torch.rand(1).item()<0.5:
+            x = torch.cat([x,x.flip(dims=(3,))],dim=3)
+        else:
+            x = torch.cat([x.flip(dims=(3,)),x],dim=3)
+        w *= 2
+    return x
+
+def reflect_pad_vertical(x, H):
+    _, _, h, w = x.shape
+    while h < H:
+        if torch.rand(1).item()<0.5:
+            x = torch.cat([x,x.flip(dims=(2,))],dim=2)
+        else:
+            x = torch.cat([x.flip(dims=(2,)),x],dim=2)
+        h *= 2
+    return x
+    
+def crop_2d(x, h, w, batch=False):
+    if not batch:
+        x = x.unsqueeze(0)
+    B, C, H, W = x.shape
+    x = reflect_pad_horizontal(x,w)
+    x = reflect_pad_vertical(x,h)
+    x = RandomCrop((h, w))(x)
+    if not batch:
+        x = x[0]
+    return x
