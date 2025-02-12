@@ -1,6 +1,7 @@
 import math
 import torch
 import torch.nn.functional as F
+from einops import rearrange
 
 def _dct_2_unscaled(x: torch.Tensor, n: int) -> torch.Tensor:
     length_in = x.shape[-1]
@@ -30,13 +31,13 @@ def frame(x: torch.Tensor, frame_length: int, frame_step: int, pad_end: bool = F
             x = F.pad(x, (0, pad_size))
             num_samples = x.shape[-1]
     num_frames = 1 + (num_samples - frame_length) // frame_step
-    frames = []
+    slices = []
     start = 0
     for _ in range(num_frames):
         end = start + frame_length
-        frames.append(x[..., start:end].unsqueeze(-2))
+        slices.append(x[..., start:end])
         start += frame_step
-    return torch.cat(frames, dim=-2)
+    return rearrange(slices, 'f ... l -> ... f l')
 
 def overlap_and_add(frames: torch.Tensor, frame_step: int) -> torch.Tensor:
     *batch_dims, num_frames, frame_length = frames.shape
@@ -68,14 +69,16 @@ def mdct(signals: torch.Tensor, frame_length: int, window_fn=vorbis_window, pad_
     else:
         framed = framed * (1.0 / math.sqrt(2.0))
     quarter_len = frame_length // 4
-    a, b, c, d = torch.split(framed, quarter_len, dim=-1)
-    def revlast(t):
-        return t.flip(dims=(-1,))
-    first_half = -revlast(c) - d
-    second_half = a - revlast(b)
-    frames_rearranged = torch.cat([first_half, second_half], dim=-1)
-    mdct_out = dct_type_iv(frames_rearranged, norm=norm)
-    return mdct_out
+    rearranged = rearrange(framed, '... (four q) -> ... four q', four=4, q=quarter_len)
+    a = rearranged[..., 0, :]
+    b = rearranged[..., 1, :]
+    c = rearranged[..., 2, :]
+    d = rearranged[..., 3, :]
+    first_half = -c.flip(dims=(-1,)) - d
+    second_half = a - b.flip(dims=(-1,))
+    stacked = torch.stack([first_half, second_half], dim=-2)
+    frames_rearranged = rearrange(stacked, '... h l -> ... (h l)')
+    return dct_type_iv(frames_rearranged, norm=norm)
 
 def inverse_mdct(mdcts: torch.Tensor, window_fn=vorbis_window, norm: str = None) -> torch.Tensor:
     half_len = mdcts.shape[-1]
@@ -87,20 +90,19 @@ def inverse_mdct(mdcts: torch.Tensor, window_fn=vorbis_window, norm: str = None)
         out = dct_type_iv(mdcts, norm="ortho")
     else:
         raise ValueError("norm must be None or 'ortho'.")
-    if half_len % 2 != 0:
-        raise ValueError("half_len must be even for this rearrangement, but got half_len=%d" % half_len)
     split_size = half_len // 2
-    x0, x1 = torch.split(out, split_size, dim=-1)
-    def revlast(t):
-        return t.flip(dims=(-1,))
-    real_frames = torch.cat([x1, -revlast(x1), -revlast(x0), -x0], dim=-1)
+    splitted = rearrange(out, '... (two s) -> ... two s', two=2, s=split_size)
+    x0 = splitted[..., 0, :]
+    x1 = splitted[..., 1, :]
+    real_frames_4 = [x1, -x1.flip(dims=(-1,)), -x0.flip(dims=(-1,)), -x0]
+    stacked = torch.stack(real_frames_4, dim=-2)
+    real_frames = rearrange(stacked, '... h l -> ... (h l)')
     if window_fn is not None:
         w = window_fn(frame_length, dtype=real_frames.dtype, device=real_frames.device)
         real_frames = real_frames * w
     else:
         real_frames = real_frames * (1.0 / math.sqrt(2.0))
-    signal = overlap_and_add(real_frames, half_len)
-    return signal
+    return overlap_and_add(real_frames, half_len)
 
 def idct_type_iv(x: torch.Tensor, norm: str = None) -> torch.Tensor:
     N = x.shape[-1]
@@ -130,20 +132,16 @@ def frame2d(x: torch.Tensor, frame_height: int, frame_width: int, pad_end: bool 
             W = x.shape[-1]
     frames_h = 1 + (H - frame_height) // step_h
     frames_w = 1 + (W - frame_width) // step_w
-    blocks = []
+    patches = []
     for row_idx in range(frames_h):
         row_start = row_idx * step_h
         row_end = row_start + frame_height
-        row_blocks = []
         for col_idx in range(frames_w):
             col_start = col_idx * step_w
             col_end = col_start + frame_width
             patch = x[..., row_start:row_end, col_start:col_end]
-            row_blocks.append(patch.unsqueeze(-3))
-        row_stack = torch.cat(row_blocks, dim=-3)
-        blocks.append(row_stack.unsqueeze(-4))
-    out = torch.cat(blocks, dim=-4)
-    return out
+            patches.append(patch)
+    return rearrange(patches, '(fh fw) ... h w -> ... fh fw h w', fh=frames_h, fw=frames_w)
 
 def overlap_and_add2d(frames_2d: torch.Tensor, frame_height: int, frame_width: int) -> torch.Tensor:
     if frame_height % 2 != 0 or frame_width % 2 != 0:
@@ -168,33 +166,34 @@ def _mdct_rearrange_1d(x: torch.Tensor) -> torch.Tensor:
     if L % 4 != 0:
         raise ValueError("last dimension must be multiple of 4.")
     quarter = L // 4
-    a, b, c, d = torch.split(x, quarter, dim=-1)
+    splitted = rearrange(x, '... (four q) -> ... four q', four=4, q=quarter)
+    a = splitted[..., 0, :]
+    b = splitted[..., 1, :]
+    c = splitted[..., 2, :]
+    d = splitted[..., 3, :]
     rev_c = c.flip(dims=(-1,))
     rev_b = b.flip(dims=(-1,))
-    out = torch.cat([-rev_c - d, a - rev_b], dim=-1)
-    return out
+    out_2 = [-rev_c - d, a - rev_b]
+    stacked = torch.stack(out_2, dim=-2)
+    return rearrange(stacked, '... h l -> ... (h l)')
 
 def mdct_rearrange_2d(patches: torch.Tensor) -> torch.Tensor:
     tmp = _mdct_rearrange_1d(patches)
-    tmp_t = tmp.transpose(-2, -1)
+    tmp_t = rearrange(tmp, '... a b -> ... b a')
     tmp_t2 = _mdct_rearrange_1d(tmp_t)
-    out = tmp_t2.transpose(-2, -1)
-    return out
-
-def _mdct_reverse_rearrange_1d(x: torch.Tensor) -> torch.Tensor:
-    raise NotImplementedError("For a complete inverse, you need to invert the signs/flips from _mdct_rearrange_1d. See inverse_mdct2d below for how we do it in one shot after iDCT-IV.")
+    return rearrange(tmp_t2, '... a b -> ... b a')
 
 def dct_type_iv_2d(patches_2d: torch.Tensor, norm: str = None) -> torch.Tensor:
     out = dct_type_iv(patches_2d, norm=norm)
-    out_t = out.transpose(-2, -1)
+    out_t = rearrange(out, '... a b -> ... b a')
     out_t2 = dct_type_iv(out_t, norm=norm)
-    return out_t2.transpose(-2, -1)
+    return rearrange(out_t2, '... a b -> ... b a')
 
 def idct_type_iv_2d(patches_2d: torch.Tensor, norm: str = None) -> torch.Tensor:
     out = idct_type_iv(patches_2d, norm=norm)
-    out_t = out.transpose(-2, -1)
+    out_t = rearrange(out, '... a b -> ... b a')
     out_t2 = idct_type_iv(out_t, norm=norm)
-    return out_t2.transpose(-2, -1)
+    return rearrange(out_t2, '... a b -> ... b a')
 
 def mdct2d(signals: torch.Tensor, frame_height: int, frame_width: int, window_fn=vorbis_window, pad_end: bool = False, norm: str = None) -> torch.Tensor:
     if (frame_height % 4 != 0) or (frame_width % 4 != 0):
@@ -208,35 +207,30 @@ def mdct2d(signals: torch.Tensor, frame_height: int, frame_width: int, window_fn
     else:
         framed = framed * (1.0 / math.sqrt(2.0))
     rearranged = mdct_rearrange_2d(framed)
-    shp = rearranged.shape
-    *batch, fh, fw, h2, w2 = shp
-    rearranged_4d = rearranged.view(*batch, fh * fw, h2, w2)
+    *batch, fh, fw, h2, w2 = rearranged.shape
+    rearranged_4d = rearrange(rearranged, '... fh fw h2 w2 -> ... (fh fw) h2 w2')
     transformed_4d = dct_type_iv_2d(rearranged_4d, norm=norm)
-    out = transformed_4d.view(*batch, fh, fw, h2, w2)
+    out = rearrange(transformed_4d, '... (fh fw) h2 w2 -> ... fh fw h2 w2', fh=fh, fw=fw)
     return out
 
 def _inverse_mdct2d_reassemble(time_domain: torch.Tensor) -> torch.Tensor:
     x = time_domain
     *b, fh, fw, h2, w2 = x.shape
-    if w2 % 2 != 0:
-        raise ValueError("Need w2 to be even => original frame_width multiple of 4.")
     half_w2 = w2 // 2
-    x0 = x[..., :half_w2]
-    x1 = x[..., half_w2:]
-    rev_x1 = x1.flip(dims=(-1,))
-    rev_x0 = x0.flip(dims=(-1,))
-    real_frames_w = torch.cat([x1, -rev_x1, -rev_x0, -x0], dim=-1)
-    real_frames_w_t = real_frames_w.transpose(-2, -1)
+    splitted = rearrange(x, '... (two w2) -> ... two w2', two=2, w2=half_w2)
+    x0 = splitted[..., 0, :]
+    x1 = splitted[..., 1, :]
+    real_frames_w_4 = [x1, -x1.flip(dims=(-1,)), -x0.flip(dims=(-1,)), -x0]
+    stacked_w = rearrange(torch.stack(real_frames_w_4, dim=-2), '... h w -> ... (h w)')
+    real_frames_w_t = rearrange(stacked_w, '... a b -> ... b a')
     h2_size = real_frames_w_t.shape[-1]
-    if h2_size % 2 != 0:
-        raise ValueError("Need H_f//2 to be even => original frame_height multiple of 4.")
     half_h2 = h2_size // 2
-    x0h = real_frames_w_t[..., :half_h2]
-    x1h = real_frames_w_t[..., half_h2:]
-    rev_x1h = x1h.flip(dims=(-1,))
-    rev_x0h = x0h.flip(dims=(-1,))
-    real_frames_hw_t = torch.cat([x1h, -rev_x1h, -rev_x0h, -x0h], dim=-1)
-    real_frames_hw = real_frames_hw_t.transpose(-2, -1)
+    splitted_h = rearrange(real_frames_w_t, '... (two s) -> ... two s', two=2, s=half_h2)
+    x0h = splitted_h[..., 0, :]
+    x1h = splitted_h[..., 1, :]
+    real_frames_hw_4 = [x1h, -x1h.flip(dims=(-1,)), -x0h.flip(dims=(-1,)), -x0h]
+    stacked_h = rearrange(torch.stack(real_frames_hw_4, dim=-2), '... h w -> ... (h w)')
+    real_frames_hw = rearrange(stacked_h, '... a b -> ... b a')
     return real_frames_hw
 
 def inverse_mdct2d(mdct_patches: torch.Tensor, window_fn=vorbis_window, norm: str = None) -> torch.Tensor:
@@ -245,9 +239,9 @@ def inverse_mdct2d(mdct_patches: torch.Tensor, window_fn=vorbis_window, norm: st
     frame_width = 2 * w2
     if (frame_height % 2 != 0) or (frame_width % 2 != 0):
         raise ValueError("inverse_mdct2d: half-len must be even => original frames must be multiple of 4.")
-    patches_4d = mdct_patches.view(*batch, fh * fw, h2, w2)
+    patches_4d = rearrange(mdct_patches, '... fh fw h2 w2 -> ... (fh fw) h2 w2')
     time_domain_4d = idct_type_iv_2d(patches_4d, norm=norm)
-    time_domain = time_domain_4d.view(*batch, fh, fw, h2, w2)
+    time_domain = rearrange(time_domain_4d, '... (fh fw) h2 w2 -> ... fh fw h2 w2', fh=fh, fw=fw)
     real_frames = _inverse_mdct2d_reassemble(time_domain)
     if window_fn is not None:
         wrow = window_fn(frame_height, dtype=real_frames.dtype, device=real_frames.device)
@@ -256,5 +250,4 @@ def inverse_mdct2d(mdct_patches: torch.Tensor, window_fn=vorbis_window, norm: st
         real_frames = real_frames * w2d
     else:
         real_frames = real_frames * (1.0 / math.sqrt(2.0))
-    signal = overlap_and_add2d(real_frames, frame_height, frame_width)
-    return signal
+    return overlap_and_add2d(real_frames, frame_height, frame_width)
