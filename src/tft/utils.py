@@ -1,6 +1,19 @@
 import torch
 import torch.nn as nn
 
+class Quantize(torch.nn.Module):
+    def __init__(self, bits=8, eps=1e-3):
+        super(Quantize, self).__init__()
+        self.scale = 2**bits/2 - 1 - eps
+    def forward(self, x):
+        x *= self.scale
+        if self.training:
+            x+=torch.rand_like(x) - 0.5
+        else:
+            x = torch.round(x)
+        x /= self.scale
+        return x
+
 def compand(x, eps=0.1, power=0.4):
     return x.sign() * ((x.abs() + eps) ** power - eps**power)
 
